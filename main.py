@@ -5,6 +5,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from pydantic import BaseModel
 from supabase import create_client, Client
 from langchain_core.tools import tool
+from agents.graph import compiled_reporting_graph
 
 load_dotenv()
 
@@ -48,21 +49,6 @@ def get_supa_rows():
 
 
 
-@app.post("/exec_assistant")
-async def exec_assistant(prompt: Prompt):
-    supabase: Client = create_client(SUPA_URL, SUPA_API_KEY)
-    response = (
-        supabase.table("exec_assitant_test")
-        .select("*")
-        .execute()
-    )
-    messages = [
-        ("human", f"{prompt.query}"),
-    ]
-    response = model.invoke(messages)
-    return response.content
-    return response.content
-
 @app.post("/test_supa")
 async def test_supa():
     supabase: Client = create_client(SUPA_URL, SUPA_API_KEY)
@@ -72,3 +58,22 @@ async def test_supa():
         .execute()
     )
     return response.data
+
+@app.post("/trigger_report")
+async def handle_report_request():
+    response = compiled_reporting_graph.invoke({
+        "messages": [{"role": "user", "content": "Generate a quarter report."}]
+    })
+
+    final_message = response["messages"][-1]
+
+    report_text = ""
+    if isinstance(final_message.content, list):
+        report_text = final_message.content[0].get("text", "")
+    else:
+        report_text = final_message.content
+
+    return {
+        "status": "success",
+        "result": report_text
+    }
