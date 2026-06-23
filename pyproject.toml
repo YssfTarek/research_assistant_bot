@@ -15,4 +15,5 @@ dependencies = [
     "supabase>=2.31.0",
     "uvicorn>=0.49.0",
     "langsmith>=0.1.0",
+    "langgraph-cli[inmem]>=0.4.30",
 ]

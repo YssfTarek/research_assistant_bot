@@ -43,3 +43,5 @@ workflow.add_edge("tools", "agent")
 
 memory = MemorySaver()
 compiled_reporting_graph = workflow.compile(checkpointer=memory)
+
+studio_reporting_graph = workflow.compile()
