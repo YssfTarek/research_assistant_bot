@@ -13,7 +13,7 @@ load_dotenv()
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
 model = ChatGoogleGenerativeAI(
-    model = "gemini-2.5-flash",
+    model = "gemini-3.5-flash",
     temperature = 0,
     google_api_key = GOOGLE_API_KEY
 )
@@ -24,8 +24,9 @@ model_with_tools = model.bind_tools(tools)
 
 sys_msg = SystemMessage(content="You are a helpful executive assistant that generates reports based on the latest department metrics.")
 
-def agent_node(state: MessagesState):
-    return {"messages": [model_with_tools.invoke([sys_msg] + state["messages"])]}
+async def agent_node(state: MessagesState):
+    response = await model_with_tools.ainvoke([sys_msg] + state["messages"])
+    return {"messages": response}
 
 workflow = StateGraph(MessagesState)
 
