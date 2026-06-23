@@ -14,7 +14,7 @@ supabase: Client = create_client(SUPA_URL, SUPA_API_KEY)
 def fetch_department_metrics():
     """Queries Supabase to get the latest progress metrics for active projects."""
     response = (
-        supabase.table("exec_assitant_test")
+        supabase.table("exec_assistant_test")
         .select("*")
         .execute()
     )

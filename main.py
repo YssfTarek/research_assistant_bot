@@ -1,4 +1,5 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Header
+from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
 import os
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -6,6 +7,7 @@ from pydantic import BaseModel
 from supabase import create_client, Client
 from langchain_core.tools import tool
 from agents.graph import compiled_reporting_graph
+import json
 
 load_dotenv()
 
@@ -65,20 +67,34 @@ async def test_supa():
     return response.data
 
 @app.post("/trigger_report")
-async def handle_report_request():
-    response = compiled_reporting_graph.invoke({
-        "messages": [{"role": "user", "content": "Generate a quarter report."}]
-    })
+async def handle_report_request(
+    prompt: Prompt,
+    x_session_id: str = Header(..., description="Session ID for the request"),
+):
+    config = {"configurable": {"thread_id": x_session_id}}
 
-    final_message = response["messages"][-1]
+    async def event_stream():
+        async for event in compiled_reporting_graph.astream_events(
+            {"messages": [{"role": "user", "content": prompt.query}]},
+            version= "v2",
+            config=config
+        ):
 
-    report_text = ""
-    if isinstance(final_message.content, list):
-        report_text = final_message.content[0].get("text", "")
-    else:
-        report_text = final_message.content
+            if event["event"] == "on_chat_model_stream":
+                chunk  = event["data"]["chunk"]
+                if chunk.content:
+                    raw_text = ""
 
-    return {
-        "status": "success",
-        "result": report_text
-    }
+                    if isinstance(chunk.content, list):
+                        for item in chunk.content:
+                            if isinstance(item, dict) and "text" in item:
+                                raw_text += item["text"]
+                            elif hasattr(item, "text"):
+                                raw_text += item.text
+                    else:
+                        raw_text = str(chunk.content)
+
+                    if raw_text:
+                        yield f"data: {json.dumps({'text': raw_text})}\n\n"
+    
+    return StreamingResponse(event_stream(), media_type="text/event-stream ")
