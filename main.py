@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Header
 from dotenv import load_dotenv
 import os
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -65,10 +65,15 @@ async def test_supa():
     return response.data
 
 @app.post("/trigger_report")
-async def handle_report_request():
+async def handle_report_request(
+    prompt: Prompt,
+    x_session_id: str = Header(..., description="Session ID for the request"),
+):
+    config = {"configurable": {"thread_id": x_session_id}}
+
     response = compiled_reporting_graph.invoke({
-        "messages": [{"role": "user", "content": "Generate a quarter report."}]
-    })
+        "messages": [{"role": "user", "content": prompt.query}]
+    }, config=config)
 
     final_message = response["messages"][-1]
 

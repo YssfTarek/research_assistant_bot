@@ -6,6 +6,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from database.tools import fetch_department_metrics
 from langgraph.graph import MessagesState
 from langchain_core.messages import SystemMessage
+from langgraph.checkpoint.memory import MemorySaver
 
 load_dotenv()
 
@@ -39,4 +40,5 @@ workflow.add_conditional_edges(
 )
 workflow.add_edge("tools", "agent")
 
-compiled_reporting_graph = workflow.compile()
+memory = MemorySaver()
+compiled_reporting_graph = workflow.compile(checkpointer=memory)
