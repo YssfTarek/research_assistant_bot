@@ -9,12 +9,17 @@ from agents.graph import compiled_reporting_graph
 
 load_dotenv()
 
+LANGCHAIN_API_KEY = os.getenv("LANGCHAIN_API_KEY")
+LANGCHAIN_TRACING_V2 = os.getenv("LANGCHAIN_TRACING_V2")
+LANGCHAIN_PROJECT = os.getenv("LANGCHAIN_PROJECT")
+LANGCHAIN_ENDPOINT = os.getenv("LANGCHAIN_ENDPOINT")
+
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 SUPA_API_KEY = os.getenv("SUPA_API_KEY")
 SUPA_URL = os.getenv("SUPA_URL")
 
 model = ChatGoogleGenerativeAI(
-    model = "gemini-2.5-flash",
+    model = "gemini-3.5-flash",
     temperature = 0,
     google_api_key = GOOGLE_API_KEY
 )
