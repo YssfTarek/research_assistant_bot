@@ -1,13 +1,15 @@
+import os
+import json
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Header
 from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
-import os
 from langchain_google_genai import ChatGoogleGenerativeAI
 from pydantic import BaseModel
 from supabase import create_client, Client
 from langchain_core.tools import tool
-from agents.graph import compiled_reporting_graph
-import json
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+from agents.graph import workflow  # Import the uncompiled workflow
 
 load_dotenv()
 
@@ -20,6 +22,8 @@ GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 SUPA_API_KEY = os.getenv("SUPA_API_KEY")
 SUPA_URL = os.getenv("SUPA_URL")
 
+SUPA_MEM_URI = os.getenv("SUPA_MEM_URI")
+
 model = ChatGoogleGenerativeAI(
     model = "gemini-3.5-flash",
     temperature = 0,
@@ -29,7 +33,23 @@ model = ChatGoogleGenerativeAI(
 class Prompt(BaseModel):
     query: str
 
-app = FastAPI()
+# ==================== FASTAPI LIFESPAN MANAGER ====================
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # 1. Initialize the async checkpointer from your environment variable
+    async with AsyncPostgresSaver.from_conn_string(os.getenv("SUPA_MEM_URI")) as checkpointer:
+        # 2. Run table checking/generation asynchronously
+        await checkpointer.setup()
+        
+        # 3. Compile the graph with your new async database memory layer
+        # Storing it in app.state makes it accessible across all route files
+        app.state.graph = workflow.compile(checkpointer=checkpointer)
+        
+        # 4. Turn control over to FastAPI. The connection stays active!
+        yield
+# ==================================================================
+
+app = FastAPI(lifespan=lifespan)
 
 @app.get("/")
 async def say_hi():
@@ -73,8 +93,10 @@ async def handle_report_request(
 ):
     config = {"configurable": {"thread_id": x_session_id}}
 
+    graph = app.state.graph  # Access the compiled graph from app.state
+
     async def event_stream():
-        async for event in compiled_reporting_graph.astream_events(
+        async for event in graph.astream_events(
             {"messages": [{"role": "user", "content": prompt.query}]},
             version= "v2",
             config=config
