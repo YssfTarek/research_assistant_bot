@@ -59,37 +59,68 @@ async def summarization_node(state: ReportState):
     }
 
 
-# ==================== 3. AGENT EXECUTION NODE ====================
-async def agent_node(state: ReportState):
+# ==================== 3. MULTI-AGENT EXECUTION NODES ====================
+async def investigator_node(state: ReportState):
+    """Agent 1: The Triage Specialist. Evaluates if database tools are required."""
     summary = state.get("summary", "")
     messages = state.get("messages", [])
 
+    investigator_sys = SystemMessage(content=(
+        "You are an Elite Data Investigator. Look at the user's request.\n"
+        "If they want fresh metrics, updates, or a data lookup, use your tools immediately.\n"
+        "If they are just asking to edit layout, format text, or change wording, do not use tools; "
+        "just pass the conversation forward."
+    ))
+
     # Mix running memory context back into system prompt dynamically
     if summary:
-        contextual_sys_message = SystemMessage(
-            content=f"{sys_msg.content}\n\nContext summary of prior turns: {summary}"
-        )
-        input_messages = [contextual_sys_message] + messages
+        input_message = SystemMessage(content=f"{investigator_sys.content}\n\nPrior Context: {summary}")
+        input_messages = [input_message] + messages
     else:
-        input_messages = [sys_msg] + messages
+        input_messages = [investigator_sys] + messages
     
     response = await model_with_tools.ainvoke(input_messages)
+    response.name = "investigator"
+    return {"messages": [response]}
+
+async def writer_node(state: ReportState):
+    """Agent 2: The Content Artisan. Focuses purely on writing clean markdown."""
+    summary = state.get("summary", "")
+    messages = state.get("messages", [])
+
+    writer_sys = SystemMessage(content=(
+        "You are a Master Content Artisan. Your task is to take the user's request and any prior context, "
+        "and produce a clean, professional, beautifully structured executive markdown report. Do not add new data; just format and refine."
+        "Do not include conversational filler, introductions, or signatures. Output raw markdown only."
+    ))
+
+    # Mix running memory context back into system prompt dynamically
+    if summary:
+        input_message = SystemMessage(content=f"{writer_sys.content}\n\nPrior Context: {summary}")
+        input_messages = [input_message] + messages
+    else:
+        input_messages = [writer_sys] + messages
+    
+    response = await model.ainvoke(input_messages)
+    response.name = "writer"
     return {"messages": [response]}
 
 
 # ==================== 4. CONDITIONAL LOOP ROUTER ====================
 def post_agent_router(state: ReportState):
-    """Intercepts turn termination to check if memory cleanup is required."""
-    route = tools_condition(state)
-    
-    # If the model wants to call a tool, respect it and jump straight to the tool node
-    if route == "tools":
+    """Deterministic routing logic to coordinate our multi-agent workflow."""
+    messages = state.get("messages", [])
+    last_message = messages[-1] if messages else None
+
+    if tools_condition(state) == "tools":
         return "tools"
-        
-    # If the model wanted to finish, evaluate message list threshold bounds
-    if len(state.get("messages", [])) > 6:
+    
+    if last_message and getattr(last_message, "name", "") == "investigator":
+        return "writer"
+    
+    if len(messages) > 6:  # Arbitrary threshold to trigger summarization
         return "summarize"
-        
+    
     return END
 
 
@@ -97,29 +128,31 @@ def post_agent_router(state: ReportState):
 workflow = StateGraph(ReportState)
 
 # Register Nodes
-workflow.add_node("agent", agent_node)
+workflow.add_node("investigator", investigator_node)
+workflow.add_node("writer", writer_node)
 workflow.add_node("tools", ToolNode(tools))
 workflow.add_node("summarize", summarization_node)
 
 # Entry Connection: Always start with the agent
-workflow.add_edge(START, "agent")
+workflow.add_edge(START, "investigator")
 
-# Evaluate loops directly upon completion of agent execution cycles
-workflow.add_conditional_edges(
-    "agent",
-    post_agent_router,
-    {
-        "tools": "tools",
-        "summarize": "summarize",
-        END: END
-    }
-)
+# Tools always route their results right back back to the investigator 
+workflow.add_edge("tools", "investigator")
+
+# Apply our conditional router to the investigator node
+workflow.add_conditional_edges("investigator", post_agent_router, {
+    "tools": "tools",
+    "writer": "writer",
+})
+
+# Apply our conditional router to the writer node so it can evaluate memory bounds
+workflow.add_conditional_edges("writer", post_agent_router, {
+    "summarize": "summarize",
+    END: END
+})
 
 # If the summarizer runs, its work is complete and it can exit safely until the next turn
 workflow.add_edge("summarize", END)
-
-# Tool executions pipe immediately back to the model to evaluate the result
-workflow.add_edge("tools", "agent")
 
 # CRITICAL: We stop here! Do NOT call workflow.compile() unless using Studio
 #compiled_reporting_graph = workflow.compile() #uncomment when not using Studio

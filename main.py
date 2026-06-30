@@ -1,6 +1,7 @@
 import os
 import json
 from contextlib import asynccontextmanager
+from typing import Optional
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
@@ -10,6 +11,7 @@ from supabase import create_client, Client
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langchain_core.messages import RemoveMessage
 from agents.graph import workflow  # Import the uncompiled workflow
+from uuid import uuid4
 
 load_dotenv()
 
@@ -33,7 +35,7 @@ model = ChatGoogleGenerativeAI(
 )
 
 class Prompt(BaseModel):
-    query: str
+    query: Optional[str] = None
 
 # ==================== FASTAPI LIFESPAN MANAGER ====================
 @asynccontextmanager
@@ -83,32 +85,53 @@ async def test_supa():
 @app.post("/trigger_report")
 async def handle_report_request(
     prompt: Prompt,
-    x_session_id: str = Header(..., description="Session ID for the request"),
+    x_session_id: Optional[str] = Header(None, description="Session ID for the request"),
 ):
-    config = {"configurable": {"thread_id": x_session_id}}
+    is_initial_click = x_session_id is None
+
+    active_session_id  = x_session_id if not is_initial_click else str(uuid4())
+    config = {"configurable": {"thread_id": active_session_id}}
+
+    if is_initial_click or not prompt.query:
+        final_query = "Generate executive report for present projects using department metrics."
+    else:
+        final_query = prompt.query
+
     graph = app.state.graph  # Access the compiled graph from app.state
 
     async def event_stream():
+        yield f"data: {json.dumps({'session_id': active_session_id})}\n\n"
+
         async for event in graph.astream_events(
-            {"messages": [{"role": "user", "content": prompt.query}]},
+            {"messages": [{"role": "user", "content": final_query}]},
             version="v2",
             config=config
         ):
             if event["event"] == "on_chat_model_stream":
                 chunk = event["data"]["chunk"]
                 if chunk.content:
-                    raw_text = ""
+                    thought_chunk = ""
+                    content_chunk = ""
                     if isinstance(chunk.content, list):
                         for item in chunk.content:
-                            if isinstance(item, dict) and "text" in item:
-                                raw_text += item["text"]
-                            elif hasattr(item, "text"):
-                                raw_text += item.text
+                            if isinstance(item, dict):
+                                if item.get("type") == "thinking" or "thinking" in item:
+                                    thought_chunk += item.get("thinking", item.get("text", ""))
+                                elif "text" in item:
+                                    content_chunk += item["text"]
+                            else:
+                                is_thinking = getattr(item, "type", None) == "thinking"
+                                if is_thinking and hasattr(item, "text"):
+                                    thought_chunk += item.text
+                                elif hasattr(item, "text"):
+                                    content_chunk += item.text
                     else:
-                        raw_text = str(chunk.content)
-
-                    if raw_text:
-                        yield f"data: {json.dumps({'text': raw_text})}\n\n"
+                        content_chunk = str(chunk.content)
+                    
+                    if thought_chunk:
+                        yield f"data: {json.dumps({'type': 'thought', 'content': thought_chunk})}\n\n"
+                    if content_chunk:
+                        yield f"data: {json.dumps({'type': 'report', 'content': content_chunk})}\n\n"
     
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
