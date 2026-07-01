@@ -30,6 +30,7 @@ sys_msg = SystemMessage(content="You are a helpful executive assistant that gene
 # ==================== 1. CUSTOM STATE OBJECT ====================
 class ReportState(MessagesState):
     summary: str  # Retains a persistent context string across state iterations
+    current_report: str # 💾 NEW: Stores the latest complete raw markdown snapshot
 
 
 # ==================== 2. SUMMARIZATION NODE ====================
@@ -103,7 +104,13 @@ async def writer_node(state: ReportState):
     
     response = await model.ainvoke(input_messages)
     response.name = "writer"
-    return {"messages": [response]}
+
+    report_text = response.content if isinstance(response.content, str) else str(response.content)
+
+    return {
+        "messages": [response],
+        "current_report": report_text
+    }
 
 
 # ==================== 4. CONDITIONAL LOOP ROUTER ====================
